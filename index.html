@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>D1Q Field Prospecting</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --bg:#F7F5F1;
+    --ink:#14171A;
+    --muted:#5B6169;
+    --line:#DDD8CE;
+    --card:#FFFFFF;
+    --accent:#C4571B;
+    --accent-ink:#FFFFFF;
+    --s-not-contacted:#8A8F98;
+    --s-no-answer:#3B6FA6;
+    --s-spoke:#2F8F5B;
+    --s-follow-up:#C4571B;
+    --s-not-interested:#B23A3A;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--ink);
+    -webkit-tap-highlight-color:transparent;
+  }
+  #app{height:100dvh; display:flex; flex-direction:column;}
+
+  /* ---- top bar ---- */
+  #topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 14px; background:var(--card); border-bottom:1px solid var(--line);
+    z-index:1000;
+  }
+  #topbar .brand{font-weight:700; letter-spacing:.2px; font-size:15px;}
+  #topbar .brand span{color:var(--accent);}
+  #topbar .tabs{display:flex; gap:6px;}
+  .tabbtn{
+    border:1px solid var(--line); background:var(--card); color:var(--ink);
+    padding:8px 12px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;
+  }
+  .tabbtn.active{ background:var(--ink); color:#fff; border-color:var(--ink);}
+
+  /* ---- login ---- */
+  #loginScreen{
+    flex:1; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:14px; padding:24px;
+  }
+  #loginScreen h1{font-size:20px; margin:0 0 4px;}
+  #loginScreen p{color:var(--muted); font-size:13px; margin:0; text-align:center; max-width:320px;}
+  .field{width:100%; max-width:320px;}
+  .field input{
+    width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:8px; font-size:16px; background:#fff;
+  }
+  .bigbtn{
+    width:100%; max-width:320px; padding:14px; border:none; border-radius:8px;
+    background:var(--accent); color:var(--accent-ink); font-size:15px; font-weight:700; cursor:pointer;
+  }
+  .bigbtn:disabled{opacity:.5;}
+  .linkbtn{background:none;border:none;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer;}
+
+  /* ---- map view ---- */
+  #mapView{flex:1; position:relative; display:none;}
+  #mapView.active{display:block;}
+  #map{position:absolute; inset:0;}
+  #locateBtn{
+    position:absolute; top:14px; right:14px; z-index:900;
+    background:var(--card); border:1px solid var(--line); border-radius:50%;
+    width:44px; height:44px; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 2px 6px rgba(0,0,0,.15); cursor:pointer; font-size:18px;
+  }
+  #legend{
+    position:absolute; bottom:14px; left:14px; z-index:900; background:var(--card);
+    border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:11px;
+    display:flex; flex-direction:column; gap:4px; box-shadow:0 2px 6px rgba(0,0,0,.1);
+  }
+  .legend-row{display:flex; align-items:center; gap:6px;}
+  .dot{width:10px; height:10px; border-radius:50%; display:inline-block;}
+
+  /* ---- detail panel (slide up) ---- */
+  #panelOverlay{
+    position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:1500; display:none;
+  }
+  #panelOverlay.active{display:block;}
+  #panel{
+    position:fixed; left:0; right:0; bottom:0; z-index:1600;
+    background:var(--card); border-radius:16px 16px 0 0; max-height:82vh; overflow-y:auto;
+    transform:translateY(100%); transition:transform .25s ease; box-shadow:0 -4px 20px rgba(0,0,0,.2);
+  }
+  #panel.active{transform:translateY(0);}
+  #panel .handle{width:36px; height:4px; background:var(--line); border-radius:2px; margin:10px auto;}
+  #panel .inner{padding:4px 20px 28px;}
+  #panel h2{margin:0 0 2px; font-size:18px;}
+  #panel .addr{color:var(--muted); font-size:13px; margin:0 0 14px;}
+  #panel .agents{display:flex; flex-direction:column; gap:8px; margin-bottom:16px;}
+  .agent-row{
+    display:flex; justify-content:space-between; align-items:center; background:var(--bg);
+    border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+  }
+  .agent-row .name{font-size:14px; font-weight:600;}
+  .agent-row a{color:var(--accent); text-decoration:none; font-size:13px; font-weight:600;}
+  label.sectionlabel{font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:700; margin-bottom:6px; display:block;}
+  select#statusSelect{
+    width:100%; padding:12px; border-radius:8px; border:1px solid var(--line); font-size:15px; font-weight:600; margin-bottom:16px; background:#fff;
+  }
+  #notesList{display:flex; flex-direction:column; gap:8px; margin-bottom:10px; max-height:160px; overflow-y:auto;}
+  .note-item{background:var(--bg); border-radius:8px; padding:8px 10px; font-size:13px;}
+  .note-item .meta{color:var(--muted); font-size:11px; margin-bottom:2px;}
+  #noteInput{
+    width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; font-size:14px; resize:vertical; min-height:60px; margin-bottom:8px;
+  }
+  #closePanelBtn{position:absolute; top:10px; right:14px; background:none; border:none; font-size:20px; color:var(--muted); cursor:pointer;}
+
+  /* ---- call view ---- */
+  #callView{flex:1; display:none; padding:16px; overflow-y:auto;}
+  #callView.active{display:block;}
+  #statsStrip{display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:18px;}
+  .statbox{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 8px; text-align:center;}
+  .statbox .num{font-size:20px; font-weight:800;}
+  .statbox .lbl{font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:2px;}
+  #callCard{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; min-height:180px;}
+  #callCard.empty{display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:14px; text-align:center;}
+  #callCard h2{margin:0 0 2px; font-size:19px;}
+  #callCard .biz{color:var(--muted); font-size:13px; margin:0 0 4px;}
+  #callCard .addr{color:var(--muted); font-size:12px; margin:0 0 16px;}
+  #callCard .phonebtn{
+    display:block; text-align:center; padding:14px; border-radius:8px; background:var(--ink); color:#fff;
+    text-decoration:none; font-size:16px; font-weight:700; margin-bottom:16px;
+  }
+  #callNoteInput{
+    width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; font-size:14px; resize:vertical; min-height:60px; margin-bottom:14px;
+  }
+  .outcomebtns{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;}
+  .outbtn{padding:12px 8px; border-radius:8px; border:none; font-weight:700; font-size:13px; color:#fff; cursor:pointer;}
+  .outbtn.hot{background:var(--s-spoke);}
+  .outbtn.followup{background:var(--s-follow-up);}
+  .outbtn.noanswer{background:var(--s-no-answer);}
+  .outbtn.notinterested{background:var(--s-not-interested);}
+  #skipBtn{width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--muted); font-weight:600; cursor:pointer;}
+  #nextBtn{width:100%; padding:16px; border-radius:10px; border:none; background:var(--accent); color:#fff; font-weight:800; font-size:16px; cursor:pointer; margin-bottom:16px;}
+
+  /* ---- import view ---- */
+  #importView{flex:1; display:none; padding:20px; overflow-y:auto;}
+  #importView.active{display:block;}
+  #importView h2{font-size:16px; margin-top:0;}
+  #importView p{color:var(--muted); font-size:13px; line-height:1.5;}
+  #progressWrap{margin-top:16px; display:none;}
+  #progressBar{height:10px; background:var(--line); border-radius:5px; overflow:hidden;}
+  #progressFill{height:100%; width:0%; background:var(--accent); transition:width .2s;}
+  #progressText{font-size:12px; color:var(--muted); margin-top:6px;}
+  #logBox{
+    margin-top:14px; background:#111; color:#c9f2d2; font-family:monospace; font-size:11px;
+    padding:10px; border-radius:8px; max-height:180px; overflow-y:auto; white-space:pre-wrap; display:none;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="topbar" style="display:none;" id="topbarWrap">
+    <div class="brand">D1Q <span>Field</span></div>
+    <div class="tabs">
+      <button class="tabbtn active" id="tabMap" onclick="showTab('map')">Map</button>
+      <button class="tabbtn" id="tabCall" onclick="showTab('call')">Call</button>
+      <button class="tabbtn" id="tabImport" onclick="showTab('import')">Import</button>
+      <button class="tabbtn" onclick="doSignOut()" style="color:#B23A3A;border-color:#B23A3A;">Sign out</button>
+    </div>
+  </div>
+
+  <!-- LOGIN -->
+  <div id="loginScreen">
+    <h1>D1Q Field Prospecting</h1>
+    <p>Sign in with the account set up in Firebase Authentication.</p>
+    <div class="field"><input type="email" id="loginEmail" placeholder="Email" autocomplete="username"></div>
+    <div class="field"><input type="password" id="loginPass" placeholder="Password" autocomplete="current-password"></div>
+    <button class="bigbtn" onclick="doSignIn()">Sign in</button>
+    <div id="loginError" style="color:#B23A3A; font-size:12px;"></div>
+  </div>
+
+  <!-- MAP -->
+  <div id="mapView">
+    <div id="map"></div>
+    <div id="locateBtn" onclick="locateMe()">📍</div>
+    <div id="legend">
+      <div class="legend-row"><span class="dot" style="background:var(--s-not-contacted)"></span>Not contacted</div>
+      <div class="legend-row"><span class="dot" style="background:var(--s-no-answer)"></span>No answer</div>
+      <div class="legend-row"><span class="dot" style="background:var(--s-spoke)"></span>Spoke to agent</div>
+      <div class="legend-row"><span class="dot" style="background:var(--s-follow-up)"></span>Follow up</div>
+      <div class="legend-row"><span class="dot" style="background:var(--s-not-interested)"></span>Not interested</div>
+    </div>
+  </div>
+
+  <!-- COLD CALL DASHBOARD -->
+  <div id="callView">
+    <div id="statsStrip">
+      <div class="statbox"><div class="num" id="statTotal">–</div><div class="lbl">Total</div></div>
+      <div class="statbox"><div class="num" id="statRemaining">–</div><div class="lbl">Remaining</div></div>
+      <div class="statbox"><div class="num" id="statHot">–</div><div class="lbl">Hot leads</div></div>
+      <div class="statbox"><div class="num" id="statCalled">–</div><div class="lbl">Called</div></div>
+    </div>
+    <button id="nextBtn" onclick="getNextContact()">Get next contact</button>
+    <div id="callCard" class="empty">Tap "Get next contact" to pull a random uncalled contact.</div>
+  </div>
+
+  <!-- IMPORT -->
+  <div id="importView">
+    <h2>Import &amp; geocode from GHL export</h2>
+    <p>Run this once to load offices. It dedupes by Business Name + Full Address, then geocodes each office (OpenStreetMap, ~1/sec — 1,900 offices takes about 30&ndash;40 minutes). Safe to close and re-run later; already-geocoded offices are skipped.</p>
+    <input type="file" id="csvFile" accept=".csv">
+    <button class="bigbtn" style="margin-top:12px; max-width:none;" onclick="startImport()">Start import</button>
+    <div id="progressWrap">
+      <div id="progressBar"><div id="progressFill"></div></div>
+      <div id="progressText">Waiting to start…</div>
+    </div>
+    <div id="logBox"></div>
+
+    <div id="manualPinSection" style="margin-top:24px; display:none;">
+      <h2>Offices needing a manual pin</h2>
+      <p>These didn't geocode automatically. Search an address or drag the marker, then save.</p>
+      <div id="manualPinList"></div>
+    </div>
+    <button class="bigbtn" style="margin-top:20px; max-width:none; background:var(--ink);" onclick="loadManualPinList()">Load offices needing a pin</button>
+  </div>
+
+  <!-- DETAIL PANEL -->
+  <div id="panelOverlay" onclick="closePanel()"></div>
+  <div id="panel">
+    <div class="handle"></div>
+    <button id="closePanelBtn" onclick="closePanel()">✕</button>
+    <div class="inner">
+      <h2 id="panelName">—</h2>
+      <p class="addr" id="panelAddr">—</p>
+
+      <label class="sectionlabel">Agents on file</label>
+      <div class="agents" id="panelAgents"></div>
+
+      <label class="sectionlabel">Status</label>
+      <select id="statusSelect" onchange="updateStatus()">
+        <option value="not_contacted">Not contacted</option>
+        <option value="no_answer">No answer</option>
+        <option value="spoke">Spoke to agent</option>
+        <option value="follow_up">Follow up</option>
+        <option value="not_interested">Not interested</option>
+      </select>
+
+      <label class="sectionlabel">Notes</label>
+      <div id="notesList"></div>
+      <textarea id="noteInput" placeholder="Add a note from today's visit…"></textarea>
+      <button class="bigbtn" style="max-width:none;" onclick="addNote()">Save note</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============ FIREBASE CONFIG — REPLACE WITH YOUR PROJECT'S CONFIG ============ */
+const firebaseConfig = {
+  apiKey: "AIzaSyDFG66CJzstcoSl8y9h-gpuMTQq1ZxNvg8",
+  authDomain: "d1q-field-tool.firebaseapp.com",
+  projectId: "d1q-field-tool",
+  storageBucket: "d1q-field-tool.firebasestorage.app",
+  messagingSenderId: "525752289276",
+  appId: "1:525752289276:web:f675851944e17e89ad5479"
+};
+/* =============================================================================== */
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+db.enablePersistence({synchronizeTabs:true}).catch(e=>console.warn('persistence not enabled', e.code));
+
+const STATUS_COLORS = {
+  not_contacted: '#8A8F98',
+  no_answer: '#3B6FA6',
+  spoke: '#2F8F5B',
+  follow_up: '#C4571B',
+  not_interested: '#B23A3A'
+};
+const STATUS_LABELS = {
+  not_contacted:'Not contacted', no_answer:'No answer', spoke:'Spoke to agent',
+  follow_up:'Follow up', not_interested:'Not interested'
+};
+
+let map, markersLayer, officesCache = {}, activeOfficeId = null, unsubscribeOffices = null;
+
+/* ---------------- AUTH ---------------- */
+auth.onAuthStateChanged(user=>{
+  if(user){
+    document.getElementById('loginScreen').style.display='none';
+    document.getElementById('topbarWrap') && (document.getElementById('topbarWrap').style.display='flex');
+    document.querySelector('#topbar').style.display='flex';
+    showTab('map');
+    initMap();
+    listenOffices();
+  } else {
+    document.getElementById('loginScreen').style.display='flex';
+    document.querySelector('#topbar').style.display='none';
+    if(unsubscribeOffices) unsubscribeOffices();
+  }
+});
+
+function doSignIn(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const pass = document.getElementById('loginPass').value;
+  document.getElementById('loginError').textContent='';
+  auth.signInWithEmailAndPassword(email, pass)
+    .catch(err=>{ document.getElementById('loginError').textContent = err.message; });
+}
+function doSignOut(){ auth.signOut(); }
+
+/* ---------------- TABS ---------------- */
+function showTab(tab){
+  document.getElementById('mapView').classList.toggle('active', tab==='map');
+  document.getElementById('callView').classList.toggle('active', tab==='call');
+  document.getElementById('importView').classList.toggle('active', tab==='import');
+  document.getElementById('tabMap').classList.toggle('active', tab==='map');
+  document.getElementById('tabCall').classList.toggle('active', tab==='call');
+  document.getElementById('tabImport').classList.toggle('active', tab==='import');
+  if(tab==='map' && map){ setTimeout(()=>map.invalidateSize(), 50); }
+  if(tab==='call'){ refreshStats(); }
+}
+
+/* ---------------- MAP ---------------- */
+function initMap(){
+  if(map) return;
+  map = L.map('map').setView([-27.5, 153.05], 10); // default: greater Brisbane/SEQ
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom:19, attribution:'© OpenStreetMap contributors'
+  }).addTo(map);
+  markersLayer = L.layerGroup().addTo(map);
+}
+
+function locateMe(){
+  if(!navigator.geolocation){ alert('Geolocation not available on this device.'); return; }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    map.setView([pos.coords.latitude, pos.coords.longitude], 14);
+  }, err=>{ alert('Could not get location: '+err.message); }, {enableHighAccuracy:true, timeout:8000});
+}
+
+function listenOffices(){
+  unsubscribeOffices = db.collection('offices').onSnapshot(snap=>{
+    markersLayer.clearLayers();
+    officesCache = {};
+    snap.forEach(doc=>{
+      const o = doc.data();
+      o.id = doc.id;
+      officesCache[doc.id] = o;
+      if(typeof o.lat === 'number' && typeof o.lng === 'number'){
+        const color = STATUS_COLORS[o.status || 'not_contacted'];
+        const marker = L.circleMarker([o.lat, o.lng], {
+          radius:8, fillColor:color, color:'#fff', weight:2, fillOpacity:0.95
+        });
+        marker.on('click', ()=> openPanel(doc.id));
+        marker.addTo(markersLayer);
+      }
+    });
+  }, err=>{ console.error('offices listener error', err); });
+}
+
+/* ---------------- DETAIL PANEL ---------------- */
+function openPanel(officeId){
+  activeOfficeId = officeId;
+  const o = officesCache[officeId];
+  if(!o) return;
+  document.getElementById('panelName').textContent = o.businessName || 'Unnamed office';
+  document.getElementById('panelAddr').textContent = o.address || '';
+  document.getElementById('statusSelect').value = o.status || 'not_contacted';
+
+  const agentsWrap = document.getElementById('panelAgents');
+  agentsWrap.innerHTML = '';
+  (o.agents || []).forEach(a=>{
+    const row = document.createElement('div');
+    row.className='agent-row';
+    const phoneLink = a.phone ? `<a href="tel:${normalizePhone(a.phone)}">Call</a>` : '';
+    row.innerHTML = `<span class="name">${a.firstName||''} ${a.lastName||''}</span>${phoneLink}`;
+    agentsWrap.appendChild(row);
+  });
+
+  renderNotes(o.notes || []);
+  document.getElementById('panelOverlay').classList.add('active');
+  document.getElementById('panel').classList.add('active');
+}
+function closePanel(){
+  document.getElementById('panelOverlay').classList.remove('active');
+  document.getElementById('panel').classList.remove('active');
+  activeOfficeId = null;
+}
+function renderNotes(notes){
+  const wrap = document.getElementById('notesList');
+  wrap.innerHTML = '';
+  notes.slice().reverse().forEach(n=>{
+    const div = document.createElement('div');
+    div.className='note-item';
+    const when = n.timestamp ? new Date(n.timestamp).toLocaleString() : '';
+    div.innerHTML = `<div class="meta">${n.author||'Unknown'} · ${when}</div>${n.content}`;
+    wrap.appendChild(div);
+  });
+}
+function updateStatus(){
+  if(!activeOfficeId) return;
+  const status = document.getElementById('statusSelect').value;
+  db.collection('offices').doc(activeOfficeId).update({status, statusUpdatedAt: Date.now()});
+}
+function addNote(){
+  if(!activeOfficeId) return;
+  const content = document.getElementById('noteInput').value.trim();
+  if(!content) return;
+  const note = {
+    content,
+    author: auth.currentUser.email,
+    timestamp: Date.now()
+  };
+  db.collection('offices').doc(activeOfficeId).update({
+    notes: firebase.firestore.FieldValue.arrayUnion(note)
+  }).then(()=>{
+    document.getElementById('noteInput').value='';
+  });
+}
+
+const STATUS_PRIORITY = { hot:4, follow_up:3, no_answer:2, not_contacted:1, not_interested:0 };
+
+async function deriveOfficeStatus(officeId){
+  if(!officeId) return;
+  try{
+    const snap = await db.collection('contacts').where('officeId','==',officeId).get();
+    if(snap.empty) return;
+    let best = 'not_interested';
+    snap.forEach(d=>{
+      const s = d.data().status || 'not_contacted';
+      if(STATUS_PRIORITY[s] > STATUS_PRIORITY[best]) best = s;
+    });
+    await db.collection('offices').doc(officeId).update({ status: best });
+  }catch(e){ console.error('deriveOfficeStatus error', e); }
+}
+
+/* ---------------- COLD CALL PICKER ---------------- */
+let currentCallContact = null;
+
+async function getNextContact(){
+  const card = document.getElementById('callCard');
+  card.className = '';
+  card.innerHTML = 'Finding a contact…';
+  try{
+    // Active statuses = still in rotation. hot/not_interested are terminal and excluded.
+    const snap = await db.collection('contacts')
+      .where('status','in',['not_contacted','no_answer','follow_up'])
+      .limit(200).get();
+    if(snap.empty){
+      card.className = 'empty';
+      card.innerHTML = 'No contacts left in rotation at all.';
+      currentCallContact = null;
+      return;
+    }
+    const now = Date.now();
+    const CLAIM_WINDOW_MS = 10*60*1000; // 10 min — long enough to make a call, short enough not to strand contacts
+    const due = snap.docs.filter(d=>{
+      const data = d.data();
+      const nc = data.nextCallDate;
+      const dueForCallback = !nc || nc <= now;
+      const notRecentlyClaimed = !data.claimedAt || (now - data.claimedAt) > CLAIM_WINDOW_MS;
+      return dueForCallback && notRecentlyClaimed;
+    });
+    if(due.length === 0){
+      card.className = 'empty';
+      const soonest = snap.docs.map(d=>d.data().nextCallDate).filter(Boolean).sort((a,b)=>a-b)[0];
+      const when = soonest ? new Date(soonest).toLocaleString() : 'unknown';
+      card.innerHTML = `No one is due for a call right now (or everyone due is currently claimed by someone else). Next scheduled callback: ${when}.`;
+      currentCallContact = null;
+      return;
+    }
+    const pick = due[Math.floor(Math.random()*due.length)];
+    currentCallContact = { id: pick.id, ...pick.data() };
+    db.collection('contacts').doc(pick.id).update({ claimedAt: now, claimedBy: auth.currentUser.email }).catch(()=>{});
+    renderCallCard(currentCallContact);
+  }catch(e){
+    card.className = 'empty';
+    card.innerHTML = 'Could not load a contact — check the console for the error.';
+    console.error('getNextContact error', e);
+  }
+}
+
+function renderCallCard(c){
+  const card = document.getElementById('callCard');
+  card.className = '';
+  const phone = c.phone || '';
+  const tags = (c.ghlTags || []).filter(t => t && t !== 'cold-lead');
+  const tagsHtml = tags.length
+    ? `<div style="margin-bottom:10px;">${tags.map(t=>`<span style="display:inline-block;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:3px 10px;font-size:11px;font-weight:600;margin-right:5px;margin-bottom:4px;">${t}</span>`).join('')}</div>`
+    : '';
+  const priorNotes = (c.notes || []).slice().reverse().slice(0,3);
+  const notesHtml = priorNotes.length
+    ? `<div style="margin-bottom:14px;">${priorNotes.map(n=>{
+        const when = n.timestamp ? new Date(n.timestamp).toLocaleDateString() : '';
+        return `<div style="background:var(--bg);border-radius:8px;padding:6px 10px;font-size:12px;margin-bottom:5px;"><span style="color:var(--muted);">${when} — ${n.author||''}:</span> ${n.content}</div>`;
+      }).join('')}</div>`
+    : '';
+  card.innerHTML = `
+    <h2>${c.firstName||''} ${c.lastName||''}</h2>
+    <p class="biz">${c.businessName||''}</p>
+    <p class="addr">${c.address||''}</p>
+    ${tagsHtml}
+    ${notesHtml}
+    ${phone ? `<a class="phonebtn" href="tel:${normalizePhone(phone)}">Call ${phone}</a>` : '<p class="addr">No phone on file</p>'}
+    <textarea id="callNoteInput" placeholder="Notes from this call…"></textarea>
+    <div class="outcomebtns">
+      <button class="outbtn hot" onclick="markContact('hot')">Hot lead</button>
+      <button class="outbtn followup" onclick="markContact('follow_up')">Follow up (7d)</button>
+      <button class="outbtn noanswer" onclick="markContact('no_answer')">No answer (1d)</button>
+      <button class="outbtn notinterested" onclick="markContact('not_interested')">Not interested</button>
+    </div>
+    <button id="skipBtn" onclick="skipContact()">Skip — leave status unchanged</button>
+  `;
+}
+
+function skipContact(){
+  if(currentCallContact){
+    db.collection('contacts').doc(currentCallContact.id).update({ claimedAt: null, claimedBy: null }).catch(()=>{});
+  }
+  getNextContact();
+}
+
+const DELAY_DAYS = { no_answer: 1, follow_up: 7 }; // [Guessing] defaults — adjust if these timings are wrong
+
+async function markContact(outcome){
+  if(!currentCallContact) return;
+  const noteText = document.getElementById('callNoteInput').value.trim();
+  const update = {
+    status: outcome,
+    statusUpdatedAt: Date.now(),
+    nextCallDate: DELAY_DAYS[outcome] ? Date.now() + DELAY_DAYS[outcome]*24*60*60*1000 : null
+  };
+  const autoLabel = { hot:'Marked hot lead', follow_up:'Marked follow up — callback in 7 days', no_answer:'No answer — callback in 1 day', not_interested:'Marked not interested' }[outcome];
+  const noteContent = noteText ? `${autoLabel}. ${noteText}` : autoLabel;
+  update.notes = firebase.firestore.FieldValue.arrayUnion({
+    content: noteContent, author: auth.currentUser.email, timestamp: Date.now()
+  });
+  await db.collection('contacts').doc(currentCallContact.id).update(update);
+  deriveOfficeStatus(currentCallContact.officeId);
+  refreshStats();
+  getNextContact();
+}
+
+async function refreshStats(){
+  try{
+    const totalSnap = await db.collection('contacts').count().get();
+    const hotSnap = await db.collection('contacts').where('status','==','hot').count().get();
+    const activeSnap = await db.collection('contacts').where('status','in',['not_contacted','no_answer','follow_up']).count().get();
+    const notContactedSnap = await db.collection('contacts').where('status','==','not_contacted').count().get();
+    const total = totalSnap.data().count;
+    const hot = hotSnap.data().count;
+    const active = activeSnap.data().count;
+    const notContacted = notContactedSnap.data().count;
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statCalled').textContent = total - notContacted;
+    document.getElementById('statRemaining').textContent = active;
+    document.getElementById('statHot').textContent = hot;
+  }catch(e){
+    console.error('refreshStats error — count() requires a recent Firestore SDK; check console.', e);
+  }
+}
+
+/* ---------------- MANUAL PIN FIXING ---------------- */
+async function loadManualPinList(){
+  const section = document.getElementById('manualPinSection');
+  const list = document.getElementById('manualPinList');
+  section.style.display = 'block';
+  list.innerHTML = 'Loading…';
+  const snap = await db.collection('offices').where('needsManualPin','==',true).get();
+  if(snap.empty){
+    list.innerHTML = '<p style="color:var(--muted);">None outstanding — everything geocoded.</p>';
+    return;
+  }
+  list.innerHTML = '';
+  snap.forEach(doc=>{
+    const o = doc.data();
+    const rowId = 'pinrow-' + doc.id;
+    const div = document.createElement('div');
+    div.style.cssText = 'background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px;';
+    div.innerHTML = `
+      <div style="font-weight:700;margin-bottom:2px;">${o.businessName}</div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:10px;">${o.address}</div>
+      <input type="text" id="${rowId}-search" placeholder="Search a better address…" style="width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;margin-bottom:8px;">
+      <button class="tabbtn" style="width:100%;margin-bottom:8px;" onclick="searchAndPreviewPin('${doc.id}')">Search</button>
+      <div id="${rowId}-map" style="height:180px;border-radius:8px;overflow:hidden;display:none;margin-bottom:8px;"></div>
+      <button class="bigbtn" style="max-width:none;display:none;" id="${rowId}-save" onclick="saveManualPin('${doc.id}')">Save this location</button>
+    `;
+    list.appendChild(div);
+  });
+}
+
+const manualPinState = {}; // officeId -> {lat, lng, map, marker}
+
+async function searchAndPreviewPin(officeId){
+  const searchInput = document.getElementById(`pinrow-${officeId}-search`);
+  const query = searchInput.value.trim();
+  if(!query){ alert('Type an address to search first.'); return; }
+  const coords = await geocode(query);
+  if(!coords){ alert('No match found — try a simpler version of the address (just street + suburb).'); return; }
+
+  const mapDiv = document.getElementById(`pinrow-${officeId}-map`);
+  const saveBtn = document.getElementById(`pinrow-${officeId}-save`);
+  mapDiv.style.display = 'block';
+  saveBtn.style.display = 'block';
+
+  if(manualPinState[officeId] && manualPinState[officeId].map){
+    manualPinState[officeId].map.remove();
+  }
+  const m = L.map(mapDiv).setView([coords.lat, coords.lng], 16);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(m);
+  const marker = L.marker([coords.lat, coords.lng], {draggable:true}).addTo(m);
+  manualPinState[officeId] = { lat: coords.lat, lng: coords.lng, map: m, marker: marker };
+  marker.on('dragend', ()=>{
+    const pos = marker.getLatLng();
+    manualPinState[officeId].lat = pos.lat;
+    manualPinState[officeId].lng = pos.lng;
+  });
+  setTimeout(()=> m.invalidateSize(), 100);
+}
+
+async function saveManualPin(officeId){
+  const state = manualPinState[officeId];
+  if(!state){ alert('Search an address first to place a pin.'); return; }
+  await db.collection('offices').doc(officeId).update({
+    lat: state.lat, lng: state.lng, needsManualPin: false
+  });
+  alert('Pin saved.');
+  loadManualPinList();
+}
+
+/* ---------------- IMPORT & GEOCODE ---------------- */
+function log(msg){
+  const box = document.getElementById('logBox');
+  box.style.display='block';
+  box.textContent += msg + "\n";
+  box.scrollTop = box.scrollHeight;
+}
+
+async function startImport(){
+  const fileInput = document.getElementById('csvFile');
+  if(!fileInput.files.length){ alert('Choose the GHL CSV export first.'); return; }
+  const file = fileInput.files[0];
+
+  // Keep the screen awake during the run — mobile browsers suspend background/locked
+  // tabs, which would otherwise kill a 30+ minute geocode loop partway through.
+  let wakeLock = null;
+  try{
+    if('wakeLock' in navigator){
+      wakeLock = await navigator.wakeLock.request('screen');
+      log('Screen wake lock active — keep this tab open and in the foreground.');
+      wakeLock.addEventListener('release', ()=> log('⚠ Wake lock released (screen locked or tab backgrounded). Re-run Start Import to resume — already-geocoded offices are skipped automatically.'));
+    } else {
+      log('⚠ Wake Lock not supported on this browser. Keep the screen on manually, or re-run Start Import if it stalls — progress is saved per office.');
+    }
+  }catch(e){ log('⚠ Could not acquire wake lock: ' + e.message); }
+
+  Papa.parse(file, {
+    header:true,
+    skipEmptyLines:true,
+    complete: async (results) => {
+      const rows = results.data.filter(r => (r['Tags']||'').includes('cold-lead') && r['Full Address']);
+      log(`Parsed ${results.data.length} rows, ${rows.length} cold-lead rows with an address.`);
+
+      // Dedupe by Business Name + Full Address -> one office, multiple agents
+      const offices = {};
+      rows.forEach(r=>{
+        const key = (r['Business Name']||'').trim() + '||' + (r['Full Address']||'').trim();
+        if(!offices[key]){
+          offices[key] = {
+            businessName: (r['Business Name']||'').trim(),
+            address: (r['Full Address']||'').trim(),
+            agents: [],
+            ghlContactIds: []
+          };
+        }
+        offices[key].agents.push({
+          contactId: r['Contact Id'],
+          firstName: r['First Name'],
+          lastName: r['Last Name'],
+          phone: r['Phone'] || '',
+          email: r['Email'] || '',
+          ghlTags: (r['Tags']||'').split(',').map(t=>t.trim()).filter(Boolean)
+        });
+        offices[key].ghlContactIds.push(r['Contact Id']);
+      });
+      const officeList = Object.values(offices);
+      log(`Deduped to ${officeList.length} unique offices. Starting geocode (~1/sec)…`);
+
+      document.getElementById('progressWrap').style.display='block';
+      let done = 0, skipped = 0, failed = 0;
+
+      for(const office of officeList){
+        const docId = slugify(office.businessName + '-' + office.address);
+
+        // Skip if already geocoded
+        const existing = await db.collection('offices').doc(docId).get();
+        if(existing.exists && existing.data().lat){
+          skipped++;
+          done++;
+          updateProgress(done, officeList.length, `Skipped (already geocoded): ${office.businessName}`);
+          continue;
+        }
+
+        const coords = await geocode(office.address);
+        if(coords){
+          await db.collection('offices').doc(docId).set({
+            businessName: office.businessName,
+            address: office.address,
+            agents: office.agents,
+            ghlContactIds: office.ghlContactIds,
+            lat: coords.lat,
+            lng: coords.lng,
+            status: 'not_contacted',
+            notes: [],
+            createdAt: Date.now()
+          }, {merge:true});
+          log(`✓ ${office.businessName} → ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`);
+        } else {
+          failed++;
+          await db.collection('offices').doc(docId).set({
+            businessName: office.businessName,
+            address: office.address,
+            agents: office.agents,
+            ghlContactIds: office.ghlContactIds,
+            lat: null, lng: null,
+            status: 'not_contacted',
+            notes: [],
+            needsManualPin: true,
+            createdAt: Date.now()
+          }, {merge:true});
+          log(`✗ No match: ${office.businessName} — ${office.address}`);
+        }
+        done++;
+        updateProgress(done, officeList.length, `${office.businessName}`);
+        await sleep(1100); // respect Nominatim 1 req/sec usage policy
+      }
+
+      log(`\nGeocoding done. ${done-skipped-failed} geocoded, ${skipped} already had coordinates, ${failed} need a manual pin.`);
+      log(`Writing individual contact records for the cold-call picker…`);
+      log(`Checking which contacts already exist so re-imports don't erase call history…`);
+
+      // Fetch existing contact IDs once, so re-running this import never resets
+      // called/hotLead/notes on a contact that's already been worked.
+      const existingIds = new Set();
+      const existingSnap = await db.collection('contacts').get();
+      existingSnap.forEach(d => existingIds.add(d.id));
+      log(`${existingIds.size} contacts already on file.`);
+
+      let contactsWritten = 0, contactsUpdated = 0;
+      const batchSize = 400; // Firestore batch write limit is 500
+      let batch = db.batch();
+      let opsInBatch = 0;
+      for(const office of officeList){
+        const officeId = slugify(office.businessName + '-' + office.address);
+        for(const agent of office.agents){
+          if(!agent.contactId) continue;
+          const ref = db.collection('contacts').doc(agent.contactId);
+          const infoFields = {
+            firstName: agent.firstName || '',
+            lastName: agent.lastName || '',
+            phone: agent.phone || '',
+            email: agent.email || '',
+            businessName: office.businessName,
+            address: office.address,
+            officeId: officeId,
+            ghlTags: agent.ghlTags || []  // always refreshed — this is a reference from GHL, not app-owned state
+          };
+          if(existingIds.has(agent.contactId)){
+            // Already exists — refresh info + tags, never touch status/nextCallDate/notes.
+            batch.set(ref, infoFields, {merge:true});
+            contactsUpdated++;
+          } else {
+            // Brand new contact — safe to set full defaults.
+            batch.set(ref, {
+              ...infoFields,
+              status: 'not_contacted',
+              nextCallDate: null,
+              notes: [],
+              createdAt: Date.now()
+            }, {merge:true});
+            contactsWritten++;
+          }
+          opsInBatch++;
+          if(opsInBatch >= batchSize){
+            await batch.commit();
+            batch = db.batch();
+            opsInBatch = 0;
+          }
+        }
+      }
+      if(opsInBatch > 0) await batch.commit();
+      log(`✓ ${contactsWritten} new contacts added, ${contactsUpdated} existing contacts refreshed (call history untouched).`);
+
+      alert(`Import complete. ${failed} offices need manual pin placement. ${contactsWritten} contacts ready for cold calling.`);
+      if(wakeLock){ wakeLock.release(); wakeLock = null; }
+    }
+  });
+}
+
+function updateProgress(done, total, label){
+  const pct = Math.round((done/total)*100);
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent = `${done}/${total} — ${label}`;
+}
+
+async function geocode(address){
+  try{
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=au&q=${encodeURIComponent(address)}`;
+    const res = await fetch(url, { headers: { 'Accept-Language':'en-AU' } });
+    const data = await res.json();
+    if(data && data.length){
+      return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+    }
+    return null;
+  }catch(e){
+    console.error('geocode error', e);
+    return null;
+  }
+}
+function slugify(str){
+  return str.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').slice(0,120);
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+// [Guessing] Assumes AU numbers when no country code is present — GHL export in this
+// account only showed +61-format numbers, but spot-check after the real import.
+function normalizePhone(raw){
+  if(!raw) return '';
+  let digits = raw.replace(/[^\d+]/g, '');
+  if(digits.startsWith('+')) return digits;
+  if(digits.startsWith('0')) return '+61' + digits.slice(1);
+  if(digits.startsWith('61')) return '+' + digits;
+  return digits;
+}
+</script>
+</body>
+</html>
